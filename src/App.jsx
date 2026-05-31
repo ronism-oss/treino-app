@@ -2,6 +2,93 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 
 const REST_SECONDS = 150; // 2 min 30 s
 
+// Treinos padrão do Edu — texto no mesmo formato que o parser entende
+const PRESETS = [
+  {
+    label: "Treino 1",
+    focus: "Costas + Bíceps",
+    text: `Puxada no triângulo 3x10 - 55kg
+Serrote 3x10 - 26/28kg
+Remada aberta altura do cotovelo 4x10 - 45kg
+Crucifixo inverso 4x12 - 40kg
+Bíceps barra 3x10 - 25kg
+Bíceps máquina 3x12 - 20kg`,
+  },
+  {
+    label: "Treino 2",
+    focus: "Peito + Ombro + Braços",
+    text: `Supino barra 3x12 - 17kg
+Crucifixo máquina 4x10 - 65/70kg
+Remada aberta 4x10 - 45/50kg
+Puxada aberta 4x10 - 55kg
+Desenvolvimento na máquina 3x10 - 20/22kg
+Elevação lateral 4x12 - 10kg
+Bíceps barra W 3x12 - 25kg
+Tríceps na barra 3x12 - 40kg`,
+  },
+  {
+    label: "Treino 3",
+    focus: "Pernas + Glúteos",
+    text: `Levantamento terra barra hexagonal 4x8 - 25kg cada lado
+Agachamento na caixa 4x15 - kettlebell 20kg
+Afundo 3x10 - kettlebell 20kg
+Cadeira flexora 3x10 - 50kg
+Cadeira abdutora 3x10 - 60kg
+Cadeira extensora 3x10 - 60kg`,
+  },
+  {
+    label: "Treino 4",
+    focus: "Peito + Ombro",
+    text: `Supino barra 3x12 - 17kg
+Crucifixo máquina 4x10 - 65/70kg
+Supino inclinado na máquina 3x10 - 25kg
+Desenvolvimento na máquina 3x10 - 20/22kg
+Elevação lateral 4x12 - 10kg`,
+  },
+  {
+    label: "Treino 5",
+    focus: "Costas + Bíceps",
+    text: `Puxada no triângulo 3x10 - 55kg
+Serrote 3x10 - 26/28kg
+Remada aberta altura do cotovelo 4x10 - 45kg
+Crucifixo inverso 4x12 - 40kg
+Bíceps barra 3x10 - 25kg
+Bíceps máquina 3x12 - 20kg`,
+  },
+  {
+    label: "Treino 6",
+    focus: "Costas + Bíceps (volume)",
+    text: `Puxada aberta 3x10 - 50kg
+Remada articulada 3x12 - 40kg cada lado
+Puxada triângulo 3x10 - 45/50kg
+Remada aberta cotovelo alto 3x12 - 40/45kg
+Crucifixo inverso na máquina 3x12 - 45kg
+Bíceps barra W 3x12 - 25kg`,
+  },
+  {
+    label: "Treino 7",
+    focus: "Ombro + Costas + Bíceps + Core",
+    text: `Desenvolvimento barra em pé 3x10 - só a barra
+Remada aberta cotovelo alto 4x10 - 45kg
+Supino inclinado com barra 3x10 - 10kg cada lado
+Puxada no triângulo 3x10 - 50kg
+Crucifixo inverso na máquina 3x12 - 45kg
+Bíceps scott 3x10 - 20kg cada lado
+Bíceps em pé na barra 3x12 - 20kg
+Prancha 3x60`,
+  },
+  {
+    label: "Treino 8",
+    focus: "Peito + Ombro + Pernas",
+    text: `Supino 3x10 - 15kg cada lado
+Crucifixo na máquina 3x10 - 65kg
+Desenvolvimento na máquina sentado 3x10 - 20kg cada lado
+Elevação lateral 3x10 - 8/9kg
+Agachamento na caixa 3x10 - kettlebell 20kg
+Cadeira extensora 3x10 - 40/50kg`,
+  },
+];
+
 // ---------- Parser ----------
 // Reconhece linhas como:
 //   "Supino reto 4x10"
@@ -78,32 +165,54 @@ function getAudioCtx() {
   return _audioCtx;
 }
 
+// Chamar DENTRO de um gesto do usuário (toque) para destravar o áudio no iOS.
+// Toca um silêncio inaudível só pra "ligar" o contexto.
+function unlockAudio() {
+  try {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.value = 0.0001; // praticamente mudo
+    o.connect(g);
+    g.connect(ctx.destination);
+    o.start();
+    o.stop(ctx.currentTime + 0.03);
+  } catch (e) {}
+}
+
 function alertEnd() {
-  // som: três bipes ascendentes
+  // som: padrão de alarme — 5 bipes fortes e longos
   try {
     const ctx = getAudioCtx();
     if (ctx) {
       if (ctx.state === "suspended") ctx.resume();
-      const notes = [660, 880, 1100];
-      notes.forEach((freq, i) => {
-        const start = ctx.currentTime + i * 0.22;
+      const t0 = ctx.currentTime;
+      const beeps = 5;
+      const gap = 0.34;
+      const dur = 0.26;
+      for (let i = 0; i < beeps; i++) {
+        const start = t0 + i * gap;
         const o = ctx.createOscillator();
         const g = ctx.createGain();
         o.connect(g);
         g.connect(ctx.destination);
-        o.type = "sine";
-        o.frequency.value = freq;
+        o.type = "square"; // mais penetrante que sine
+        o.frequency.value = i % 2 === 0 ? 880 : 1175;
         g.gain.setValueAtTime(0.0001, start);
-        g.gain.exponentialRampToValueAtTime(0.5, start + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, start + 0.18);
+        g.gain.exponentialRampToValueAtTime(0.6, start + 0.02);
+        g.gain.setValueAtTime(0.6, start + dur - 0.04);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
         o.start(start);
-        o.stop(start + 0.2);
-      });
+        o.stop(start + dur);
+      }
     }
   } catch (e) {}
   // vibração (Android/Chrome; iOS Safari ignora silenciosamente)
   try {
-    if (navigator.vibrate) navigator.vibrate([300, 120, 300, 120, 400]);
+    if (navigator.vibrate)
+      navigator.vibrate([400, 150, 400, 150, 400, 150, 600]);
   } catch (e) {}
 }
 
@@ -136,10 +245,29 @@ export default function App() {
   const tickRef = useRef(null);
   const firedRef = useRef(false); // garante que o alerta toque uma vez só
 
+  const wakeLockRef = useRef(null);
+
+  // Wake Lock: impede a tela de apagar/bloquear durante o treino
+  const requestWakeLock = useCallback(async () => {
+    try {
+      if ("wakeLock" in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      }
+    } catch (e) {}
+  }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    try {
+      if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+      }
+    } catch (e) {}
+  }, []);
+
   const startRest = useCallback((seconds = REST_SECONDS) => {
     // "destrava" o áudio no mesmo gesto de toque (necessário no iOS)
-    const ctx = getAudioCtx();
-    if (ctx && ctx.state === "suspended") ctx.resume();
+    unlockAudio();
     firedRef.current = false;
     setEndAt(Date.now() + seconds * 1000);
     setRestLeft(seconds);
@@ -185,17 +313,37 @@ export default function App() {
     };
   }, [resting, endAt]);
 
-  const build = () => {
-    const parsed = parseWorkout(raw);
+  // Mantém a tela acesa enquanto estiver na tela de treino
+  useEffect(() => {
+    if (phase === "workout") {
+      requestWakeLock();
+      const onVis = () => {
+        if (document.visibilityState === "visible") requestWakeLock();
+      };
+      document.addEventListener("visibilitychange", onVis);
+      return () => {
+        document.removeEventListener("visibilitychange", onVis);
+        releaseWakeLock();
+      };
+    } else {
+      releaseWakeLock();
+    }
+  }, [phase, requestWakeLock, releaseWakeLock]);
+
+  const buildFrom = (text) => {
+    const parsed = parseWorkout(text);
     if (parsed.filter((i) => i.type === "exercise").length === 0) {
       alert(
         "Não encontrei exercícios. Use o formato: Nome 4x10 (séries x reps), carga opcional depois de um traço."
       );
       return;
     }
+    unlockAudio(); // destrava áudio já no gesto de iniciar o treino
     setItems(parsed);
     setPhase("workout");
   };
+
+  const build = () => buildFrom(raw);
 
   const toggleSet = (exId, setIdx) => {
     setItems((prev) =>
@@ -348,6 +496,76 @@ export default function App() {
           >
             Criar Rotina →
           </button>
+
+          {/* Treinos fixos do Edu */}
+          <div
+            style={{
+              marginTop: 28,
+              paddingTop: 20,
+              borderTop: `1px solid ${C.line}`,
+            }}
+          >
+            <div
+              style={{
+                fontFamily: DISPLAY,
+                fontWeight: 700,
+                fontSize: 13,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: C.dim,
+                marginBottom: 4,
+              }}
+            >
+              Treinos do Edu
+            </div>
+            <div style={{ fontSize: 11, color: C.dim, marginBottom: 14 }}>
+              Toque pra começar na hora.
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+              }}
+            >
+              {PRESETS.map((p, i) => (
+                <button
+                  key={i}
+                  onClick={() => buildFrom(p.text)}
+                  style={{
+                    textAlign: "left",
+                    background: C.panel,
+                    border: `1px solid ${C.line}`,
+                    borderRadius: 12,
+                    padding: "14px 14px",
+                    cursor: "pointer",
+                    color: C.text,
+                  }}
+                >
+                  <div
+                    style={{
+                      fontFamily: DISPLAY,
+                      fontWeight: 900,
+                      fontSize: 15,
+                      marginBottom: 4,
+                    }}
+                  >
+                    {p.label}
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 11,
+                      color: C.accent,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {p.focus}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
