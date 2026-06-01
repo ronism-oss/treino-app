@@ -147,11 +147,86 @@ function parseWorkout(text) {
   return items;
 }
 
+// Camada de persistência: usa window.storage (ambiente Claude) quando existe,
+// senão cai pro localStorage (site publicado no Vercel). Mesma interface async.
+const store = {
+  async get(key) {
+    try {
+      if (typeof window !== "undefined" && window.storage) {
+        return await window.storage.get(key);
+      }
+      const v = localStorage.getItem(key);
+      return v == null ? null : { key, value: v };
+    } catch (e) {
+      return null;
+    }
+  },
+  async set(key, value) {
+    try {
+      if (typeof window !== "undefined" && window.storage) {
+        return await window.storage.set(key, value);
+      }
+      localStorage.setItem(key, value);
+      return { key, value };
+    } catch (e) {
+      return null;
+    }
+  },
+};
+
+// Deduz grupos musculares a partir dos nomes dos exercícios.
+// Mantém a ordem em que aparecem (peito antes de costas se veio antes).
+const MUSCLE_RULES = [
+  { group: "Peito", kw: ["supino", "crucifixo", "peck", "peitoral", "flexão", "flexao", "crossover"] },
+  { group: "Costas", kw: ["puxada", "remada", "serrote", "barra fixa", "pulldown", "pull down", "levantamento terra", "terra"] },
+  { group: "Ombro", kw: ["desenvolvimento", "elevação lateral", "elevacao lateral", "elevação frontal", "elevacao frontal", "arnold", "militar"] },
+  { group: "Bíceps", kw: ["bíceps", "biceps", "rosca", "scott"] },
+  { group: "Tríceps", kw: ["tríceps", "triceps", "testa", "corda", "francês", "frances", "mergulho"] },
+  { group: "Posterior de ombro", kw: ["crucifixo inverso", "inverso"] },
+  { group: "Quadríceps", kw: ["agachamento", "extensora", "leg press", "leg", "afundo", "avanço", "avanco", "passada"] },
+  { group: "Posterior de coxa", kw: ["flexora", "stiff", "mesa flexora"] },
+  { group: "Glúteos", kw: ["glúteo", "gluteo", "abdutora", "hip thrust", "elevação pélvica", "elevacao pelvica", "kettlebell"] },
+  { group: "Panturrilha", kw: ["panturrilha", "gêmeos", "gemeos"] },
+  { group: "Core", kw: ["prancha", "abdominal", "abdômen", "abdomen", "core"] },
+];
+
+function muscleSummary(exercises) {
+  const found = [];
+  for (const ex of exercises) {
+    const n = ex.name.toLowerCase();
+    for (const rule of MUSCLE_RULES) {
+      // "crucifixo inverso" é posterior de ombro, não peito
+      if (rule.group === "Peito" && n.includes("inverso")) continue;
+      if (rule.kw.some((k) => n.includes(k)) && !found.includes(rule.group)) {
+        found.push(rule.group);
+      }
+    }
+  }
+  return found;
+}
+
 // ---------- Timer ----------
 function fmt(s) {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+// "há 2h", "ontem", "há 3 dias" — referência amigável de quando foi
+function timeAgo(ts) {
+  const diff = Date.now() - ts;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "agora";
+  if (min < 60) return `há ${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  if (d === 1) return "ontem";
+  if (d < 7) return `há ${d} dias`;
+  const date = new Date(ts);
+  return `${String(date.getDate()).padStart(2, "0")}/${String(
+    date.getMonth() + 1
+  ).padStart(2, "0")}`;
 }
 
 // AudioContext reaproveitado (criar um por toque trava no iOS)
@@ -237,6 +312,28 @@ export default function App() {
   const [items, setItems] = useState([]);
   const [phase, setPhase] = useState("input"); // input | workout
   const [notes, setNotes] = useState(""); // sugestões de melhoria
+  const [history, setHistory] = useState([]); // últimos treinos {name, ts}
+
+  // Carrega o histórico salvo ao abrir o app
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await store.get("history");
+        if (r && r.value) setHistory(JSON.parse(r.value));
+      } catch (e) {
+        // chave ainda não existe — histórico vazio
+      }
+    })();
+  }, []);
+
+  const recordWorkout = useCallback((name) => {
+    setHistory((prev) => {
+      const entry = { name, ts: Date.now() };
+      const next = [entry, ...prev].slice(0, 3); // mantém só os 3 últimos
+      store.set("history", JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
 
   // timer baseado em timestamp de término (sobrevive a sair do app)
   const [endAt, setEndAt] = useState(null); // ms epoch de quando o descanso acaba
@@ -330,7 +427,7 @@ export default function App() {
     }
   }, [phase, requestWakeLock, releaseWakeLock]);
 
-  const buildFrom = (text) => {
+  const buildFrom = (text, name) => {
     const parsed = parseWorkout(text);
     if (parsed.filter((i) => i.type === "exercise").length === 0) {
       alert(
@@ -339,6 +436,17 @@ export default function App() {
       return;
     }
     unlockAudio(); // destrava áudio já no gesto de iniciar o treino
+    const exs = parsed.filter((i) => i.type === "exercise");
+    const section = parsed.find((i) => i.type === "section");
+    // nome: preset > título do texto > resumo de músculos > genérico
+    let finalName = name || (section && section.title);
+    if (!finalName) {
+      const muscles = muscleSummary(exs);
+      finalName = muscles.length
+        ? "Avulso · " + muscles.join(" + ")
+        : "Treino avulso";
+    }
+    recordWorkout(finalName);
     setItems(parsed);
     setPhase("workout");
   };
@@ -443,6 +551,54 @@ export default function App() {
 
       {phase === "input" && (
         <div style={{ padding: 18 }}>
+          {history.length > 0 && (
+            <div style={{ marginBottom: 22 }}>
+              <div
+                style={{
+                  fontFamily: DISPLAY,
+                  fontWeight: 700,
+                  fontSize: 13,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: C.dim,
+                  marginBottom: 10,
+                }}
+              >
+                Últimos treinos
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {history.map((h, i) => (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      background: C.panel,
+                      border: `1px solid ${C.line}`,
+                      borderRadius: 10,
+                      padding: "10px 12px",
+                    }}
+                  >
+                    <span style={{ fontFamily: MONO, fontSize: 13 }}>
+                      {h.name}
+                    </span>
+                    <span
+                      style={{
+                        fontFamily: MONO,
+                        fontSize: 11,
+                        color: C.dim,
+                        flexShrink: 0,
+                        marginLeft: 10,
+                      }}
+                    >
+                      {timeAgo(h.ts)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div
             style={{
               fontSize: 12,
@@ -531,7 +687,7 @@ export default function App() {
               {PRESETS.map((p, i) => (
                 <button
                   key={i}
-                  onClick={() => buildFrom(p.text)}
+                  onClick={() => buildFrom(p.text, `${p.label} · ${p.focus}`)}
                   style={{
                     textAlign: "left",
                     background: C.panel,
