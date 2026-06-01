@@ -212,6 +212,16 @@ function fmt(s) {
   return `${m}:${String(sec).padStart(2, "0")}`;
 }
 
+// duração longa: "45:12" ou "1:05:30"
+function fmtDur(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0)
+    return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
 // "há 2h", "ontem", "há 3 dias" — referência amigável de quando foi
 function timeAgo(ts) {
   const diff = Date.now() - ts;
@@ -264,7 +274,7 @@ function alertEnd() {
     if (ctx) {
       if (ctx.state === "suspended") ctx.resume();
       const t0 = ctx.currentTime;
-      const beeps = 5;
+      const beeps = 7;
       const gap = 0.34;
       const dur = 0.26;
       for (let i = 0; i < beeps; i++) {
@@ -310,9 +320,12 @@ const DISPLAY = "'Archivo', 'Helvetica Neue', sans-serif";
 export default function App() {
   const [raw, setRaw] = useState("");
   const [items, setItems] = useState([]);
-  const [phase, setPhase] = useState("input"); // input | workout
+  const [phase, setPhase] = useState("input"); // input | workout | done
   const [notes, setNotes] = useState(""); // sugestões de melhoria
   const [history, setHistory] = useState([]); // últimos treinos {name, ts}
+  const [startedAt, setStartedAt] = useState(null); // início do treino (ms)
+  const [elapsed, setElapsed] = useState(0); // duração em segundos
+  const [currentName, setCurrentName] = useState(""); // nome do treino atual
 
   // Carrega o histórico salvo ao abrir o app
   useEffect(() => {
@@ -326,9 +339,9 @@ export default function App() {
     })();
   }, []);
 
-  const recordWorkout = useCallback((name) => {
+  const recordWorkout = useCallback((name, durationSec) => {
     setHistory((prev) => {
-      const entry = { name, ts: Date.now() };
+      const entry = { name, ts: Date.now(), dur: durationSec || 0 };
       const next = [entry, ...prev].slice(0, 3); // mantém só os 3 últimos
       store.set("history", JSON.stringify(next)).catch(() => {});
       return next;
@@ -427,6 +440,23 @@ export default function App() {
     }
   }, [phase, requestWakeLock, releaseWakeLock]);
 
+  // Cronômetro de duração do treino (recalcula pelo relógio real)
+  useEffect(() => {
+    if (phase !== "workout" || startedAt == null) return;
+    const recompute = () =>
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    recompute();
+    const id = setInterval(recompute, 1000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") recompute();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [phase, startedAt]);
+
   const buildFrom = (text, name) => {
     const parsed = parseWorkout(text);
     if (parsed.filter((i) => i.type === "exercise").length === 0) {
@@ -446,9 +476,25 @@ export default function App() {
         ? "Avulso · " + muscles.join(" + ")
         : "Treino avulso";
     }
-    recordWorkout(finalName);
+    setCurrentName(finalName);
     setItems(parsed);
+    setStartedAt(Date.now());
+    setElapsed(0);
     setPhase("workout");
+  };
+
+  const finishWorkout = () => {
+    stopRest();
+    recordWorkout(currentName, elapsed);
+    setPhase("done");
+  };
+
+  const resetToStart = () => {
+    setPhase("input");
+    setItems([]);
+    setStartedAt(null);
+    setElapsed(0);
+    setRaw("");
   };
 
   const build = () => buildFrom(raw);
@@ -527,25 +573,36 @@ export default function App() {
           TREINO<span style={{ color: C.accent }}>.</span>
         </div>
         {phase === "workout" && (
-          <button
-            onClick={() => {
-              setPhase("input");
-              stopRest();
-            }}
-            style={{
-              background: "transparent",
-              border: `1px solid ${C.line}`,
-              color: C.dim,
-              fontFamily: MONO,
-              fontSize: 11,
-              padding: "6px 10px",
-              borderRadius: 6,
-              cursor: "pointer",
-              textTransform: "uppercase",
-            }}
-          >
-            Editar
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                fontFamily: MONO,
+                fontSize: 18,
+                fontWeight: 700,
+                color: C.accent,
+                fontVariantNumeric: "tabular-nums",
+              }}
+              title="Duração do treino"
+            >
+              {fmtDur(elapsed)}
+            </div>
+            <button
+              onClick={resetToStart}
+              style={{
+                background: "transparent",
+                border: `1px solid ${C.line}`,
+                color: C.dim,
+                fontFamily: MONO,
+                fontSize: 11,
+                padding: "6px 10px",
+                borderRadius: 6,
+                cursor: "pointer",
+                textTransform: "uppercase",
+              }}
+            >
+              Sair
+            </button>
+          </div>
         )}
       </div>
 
@@ -824,6 +881,141 @@ export default function App() {
               }}
             />
           </div>
+
+          <div style={{ padding: "24px 14px 0" }}>
+            <button
+              onClick={finishWorkout}
+              style={{
+                width: "100%",
+                background: C.accent,
+                color: "#0a0a0a",
+                border: "none",
+                borderRadius: 10,
+                padding: "16px",
+                fontFamily: DISPLAY,
+                fontWeight: 900,
+                fontSize: 16,
+                textTransform: "uppercase",
+                letterSpacing: "0.02em",
+                cursor: "pointer",
+              }}
+            >
+              ✓ Finalizar treino
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phase === "done" && (
+        <div
+          style={{
+            padding: "60px 24px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 64, marginBottom: 12 }}>🏆</div>
+          <div
+            style={{
+              fontFamily: DISPLAY,
+              fontWeight: 900,
+              fontSize: 32,
+              letterSpacing: "-0.02em",
+              marginBottom: 8,
+            }}
+          >
+            Parabéns!
+          </div>
+          <div
+            style={{
+              fontFamily: MONO,
+              fontSize: 14,
+              color: C.dim,
+              marginBottom: 32,
+              lineHeight: 1.5,
+            }}
+          >
+            Treino concluído. Bom trabalho, Roni.
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              width: "100%",
+              maxWidth: 320,
+              marginBottom: 32,
+            }}
+          >
+            <div
+              style={{
+                flex: 1,
+                background: C.panel,
+                border: `1px solid ${C.line}`,
+                borderRadius: 12,
+                padding: "16px 12px",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: DISPLAY,
+                  fontWeight: 900,
+                  fontSize: 26,
+                  color: C.accent,
+                }}
+              >
+                {fmtDur(elapsed)}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>
+                duração
+              </div>
+            </div>
+            <div
+              style={{
+                flex: 1,
+                background: C.panel,
+                border: `1px solid ${C.line}`,
+                borderRadius: 12,
+                padding: "16px 12px",
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: DISPLAY,
+                  fontWeight: 900,
+                  fontSize: 26,
+                  color: C.accent,
+                }}
+              >
+                {doneSets}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: C.dim }}>
+                séries feitas
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={resetToStart}
+            style={{
+              width: "100%",
+              maxWidth: 320,
+              background: C.accent,
+              color: "#0a0a0a",
+              border: "none",
+              borderRadius: 10,
+              padding: "16px",
+              fontFamily: DISPLAY,
+              fontWeight: 900,
+              fontSize: 16,
+              textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            Voltar ao início
+          </button>
         </div>
       )}
 
