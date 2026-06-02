@@ -1,0 +1,23 @@
+COMO ADICIONAR OS GIFS DOS EXERCÍCIOS
+======================================
+
+1. Coloque os arquivos .gif AQUI nesta pasta (public/gifs/).
+   Ex.: serrote.gif, supino-barra.gif, agachamento.gif
+
+2. Abra src/App.jsx e procure por "EXERCISE_GIFS" no topo do arquivo.
+
+3. Na frente de cada exercício, escreva o caminho do arquivo entre aspas.
+   Para arquivos desta pasta, use "/gifs/NOME-DO-ARQUIVO.gif".
+
+   Exemplo:
+     "serrote": "/gifs/serrote.gif",
+     "supino barra": "/gifs/supino-barra.gif",
+
+4. Salve, suba no Vercel. O botão "?" aparece só nos exercícios que
+   têm um GIF preenchido.
+
+Dica: também funciona com link externo, ex.:
+     "afundo": "https://exemplo.com/afundo.gif"
+
+Os nomes na lista ignoram acentos e maiúsculas, então não precisa se
+preocupar com "ã" ou letra maiúscula.

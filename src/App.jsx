@@ -2,6 +2,73 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 
 const REST_SECONDS = 150; // 2 min 30 s
 
+// ============================================================
+//  GIFS DOS EXERCÍCIOS
+//  Cole a URL do GIF na frente de cada exercício.
+//  Pode ser:
+//    - arquivo local na pasta public/gifs/  ->  "/gifs/serrote.gif"
+//    - link externo                          ->  "https://.../algo.gif"
+//  Deixe "" (vazio) nos que ainda não tem — o botão "?" não aparece neles.
+//  A busca ignora maiúsculas, acentos e espaços extras, então
+//  "Puxada no triângulo" casa com a chave "puxada no triangulo".
+// ============================================================
+const EXERCISE_GIFS = {
+  "puxada no triangulo": "",
+  serrote: "",
+  "remada aberta altura do cotovelo": "",
+  "remada aberta": "",
+  "remada aberta cotovelo alto": "",
+  "remada articulada": "",
+  "crucifixo inverso": "",
+  "crucifixo inverso na maquina": "",
+  "biceps barra": "",
+  "biceps barra w": "",
+  "biceps maquina": "",
+  "biceps scott": "",
+  "biceps em pe na barra": "",
+  "supino barra": "",
+  supino: "",
+  "supino inclinado na maquina": "",
+  "supino inclinado com barra": "",
+  "crucifixo maquina": "",
+  "crucifixo na maquina": "",
+  "puxada aberta": "",
+  "desenvolvimento na maquina": "",
+  "desenvolvimento na maquina sentado": "",
+  "desenvolvimento barra em pe": "",
+  "elevacao lateral": "",
+  "triceps na barra": "",
+  "levantamento terra barra hexagonal": "/gifs/levantamento-terra.gif",
+  "agachamento na caixa": "",
+  afundo: "",
+  "cadeira flexora": "",
+  "cadeira abdutora": "",
+  "cadeira extensora": "",
+  prancha: "",
+};
+
+// normaliza: minúsculas, sem acento, sem espaços duplicados
+function normalizeName(s) {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// retorna a URL do gif para um nome de exercício, ou "" se não houver
+function gifFor(name) {
+  const key = normalizeName(name);
+  if (EXERCISE_GIFS[key]) return EXERCISE_GIFS[key];
+  // tentativa tolerante: chave contida no nome ou vice-versa
+  for (const k of Object.keys(EXERCISE_GIFS)) {
+    if (!EXERCISE_GIFS[k]) continue;
+    if (key.includes(k) || k.includes(key)) return EXERCISE_GIFS[k];
+  }
+  return "";
+}
+
 // Treinos padrão do Edu — texto no mesmo formato que o parser entende
 const PRESETS = [
   {
@@ -326,6 +393,7 @@ export default function App() {
   const [startedAt, setStartedAt] = useState(null); // início do treino (ms)
   const [elapsed, setElapsed] = useState(0); // duração em segundos
   const [currentName, setCurrentName] = useState(""); // nome do treino atual
+  const [gifModal, setGifModal] = useState(null); // {name, url} ou null
 
   // Carrega o histórico salvo ao abrir o app
   useEffect(() => {
@@ -841,6 +909,7 @@ export default function App() {
                 ex={it}
                 onToggle={toggleSet}
                 onUpdate={updateSet}
+                onShowGif={(name, url) => setGifModal({ name, url })}
               />
             )
           )}
@@ -1019,6 +1088,78 @@ export default function App() {
         </div>
       )}
 
+      {/* Modal do GIF do exercício */}
+      {gifModal && (
+        <div
+          onClick={() => setGifModal(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            zIndex: 50,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: C.panel,
+              border: `1px solid ${C.line}`,
+              borderRadius: 16,
+              padding: 16,
+              maxWidth: 420,
+              width: "100%",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <div
+                style={{
+                  fontFamily: DISPLAY,
+                  fontWeight: 700,
+                  fontSize: 16,
+                }}
+              >
+                {gifModal.name}
+              </div>
+              <button
+                onClick={() => setGifModal(null)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: C.dim,
+                  fontSize: 24,
+                  lineHeight: 1,
+                  cursor: "pointer",
+                  padding: "0 4px",
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <img
+              src={gifModal.url}
+              alt={gifModal.name}
+              style={{
+                width: "100%",
+                borderRadius: 10,
+                display: "block",
+                background: C.bg,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Timer overlay */}
       {resting && (
         <div
@@ -1103,8 +1244,9 @@ export default function App() {
   );
 }
 
-function Exercise({ ex, onToggle, onUpdate }) {
+function Exercise({ ex, onToggle, onUpdate, onShowGif }) {
   const allDone = ex.sets.every((s) => s.done);
+  const gif = gifFor(ex.name);
   return (
     <div
       style={{
@@ -1127,15 +1269,50 @@ function Exercise({ ex, onToggle, onUpdate }) {
       >
         <div
           style={{
-            fontFamily: DISPLAY,
-            fontWeight: 700,
-            fontSize: 16,
-            textDecoration: allDone ? "line-through" : "none",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            minWidth: 0,
           }}
         >
-          {ex.name}
+          <div
+            style={{
+              fontFamily: DISPLAY,
+              fontWeight: 700,
+              fontSize: 16,
+              textDecoration: allDone ? "line-through" : "none",
+            }}
+          >
+            {ex.name}
+          </div>
+          {gif && (
+            <button
+              onClick={() => onShowGif(ex.name, gif)}
+              title="Ver como fazer"
+              style={{
+                flexShrink: 0,
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                border: `1.5px solid ${C.accent}`,
+                background: "transparent",
+                color: C.accent,
+                fontFamily: MONO,
+                fontWeight: 700,
+                fontSize: 12,
+                lineHeight: 1,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+              }}
+            >
+              ?
+            </button>
+          )}
         </div>
-        <div style={{ fontSize: 12, color: C.dim }}>
+        <div style={{ fontSize: 12, color: C.dim, flexShrink: 0 }}>
           {ex.sets.length}×{ex.targetReps}
         </div>
       </div>
